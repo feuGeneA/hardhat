@@ -248,6 +248,8 @@ Hardhat Network's forking functionality only works with blocks from at least spu
   private readonly _consoleLogger: ConsoleLogger = new ConsoleLogger();
   private _failedStackTraces = 0;
 
+  private _irregularStatesByBlockNum: Map<string, Buffer> = new Map(); // blockNumber as BN.toString() => state root
+
   private constructor(
     private readonly _vm: VM,
     private readonly _stateManager: StateManager,
@@ -930,6 +932,10 @@ Hardhat Network's forking functionality only works with blocks from at least spu
     const account = await this._stateManager.getAccount(address);
     account.balance = newBalance;
     await this._stateManager.putAccount(address, account);
+    this._irregularStatesByBlockNum.set(
+      (await this.getLatestBlock()).header.number.toString(),
+      await this._stateManager.getStateRoot()
+    );
   }
 
   public async setAccountCode(
@@ -1480,12 +1486,21 @@ Hardhat Network's forking functionality only works with blocks from at least spu
 
   private async _setBlockContext(block: Block): Promise<void> {
     if (this._stateManager instanceof ForkStateManager) {
+      if (this._irregularStatesByBlockNum.has(block.header.number.toString())) {
+        throw new InternalError(
+          "Irregular states are not supported on a forked chain"
+        );
+      }
       return this._stateManager.setBlockContext(
         block.header.stateRoot,
         block.header.number
       );
     }
-    return this._stateManager.setStateRoot(block.header.stateRoot);
+
+    return this._stateManager.setStateRoot(
+      this._irregularStatesByBlockNum.get(block.header.number.toString()) ||
+        block.header.stateRoot
+    );
   }
 
   private async _restoreBlockContext(stateRoot: Buffer) {
